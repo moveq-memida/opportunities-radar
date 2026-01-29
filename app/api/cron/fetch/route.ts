@@ -79,46 +79,43 @@ async function runFetchJob() {
           })
           .returning();
 
-        // Generate diff if we have a previous snapshot
-        if (prevSnapshot) {
-          const diffResult = generateDiff(
-            prevSnapshot.rawContent,
+        // Generate diff
+        const diffResult = prevSnapshot
+          ? generateDiff(prevSnapshot.rawContent, fetchResult.content)
+          : generateDiff("", fetchResult.content); // Initial: compare with empty
+
+        if (diffResult.hasChanges) {
+          // Save diff
+          const [newDiff] = await db
+            .insert(diffs)
+            .values({
+              snapshotId: newSnapshot.id,
+              prevSnapshotId: prevSnapshot?.id || null,
+              patch: diffResult.patch,
+            })
+            .returning();
+
+          // Score the changes
+          const scoreResult = scoreChanges(
+            source,
+            diffResult,
             fetchResult.content
           );
 
-          if (diffResult.hasChanges) {
-            // Save diff
-            const [newDiff] = await db
-              .insert(diffs)
-              .values({
-                snapshotId: newSnapshot.id,
-                prevSnapshotId: prevSnapshot.id,
-                patch: diffResult.patch,
-              })
-              .returning();
+          // Generate summary
+          const summary = await summarizeChanges(source, diffResult);
 
-            // Score the changes
-            const scoreResult = scoreChanges(
-              source,
-              diffResult,
-              fetchResult.content
-            );
-
-            // Generate summary
-            const summary = await summarizeChanges(source, diffResult);
-
-            // Create digest
-            await db.insert(digests).values({
-              diffId: newDiff.id,
-              sourceId: source.id,
-              title: summary.title,
-              bullets: summary.bullets,
-              action: summary.action || scoreResult.action,
-              deadline: scoreResult.deadline,
-              tags: scoreResult.tags,
-              score: scoreResult.score,
-            });
-          }
+          // Create digest
+          await db.insert(digests).values({
+            diffId: newDiff.id,
+            sourceId: source.id,
+            title: summary.title,
+            bullets: summary.bullets,
+            action: summary.action || scoreResult.action,
+            deadline: scoreResult.deadline,
+            tags: scoreResult.tags,
+            score: scoreResult.score,
+          });
         }
 
         // Update source lastFetchedAt
